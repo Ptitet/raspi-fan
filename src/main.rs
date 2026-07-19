@@ -30,7 +30,8 @@ impl Config {
     }
 
     pub fn compute_speed_from_temp(&self, temp: f64) -> f64 {
-        (temp - self.min_temp) / (self.max_temp - self.min_temp).clamp(0., 1.)
+        let raw_speed = (temp - self.min_temp) / (self.max_temp - self.min_temp);
+        raw_speed.clamp(0., 1.)
     }
 }
 
