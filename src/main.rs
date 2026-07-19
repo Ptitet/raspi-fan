@@ -55,14 +55,17 @@ fn main() {
         .expect("Could not retrieve pin")
         .into_output();
     match config.mode {
-        Mode::Manual => pin
-            .set_pwm_frequency(config.pwm_frequency, config.speed)
-            .expect("Could not set fan speed"),
+        Mode::Manual => {
+            pin.set_pwm_frequency(config.pwm_frequency, config.speed)
+                .expect("Could not set fan speed");
+            println!("Set fan speed to {}", config.speed);
+        }
         Mode::Auto => loop {
             let cpu_temp = get_cpu_temp();
             let duty_cycle = config.compute_speed_from_temp(cpu_temp);
             pin.set_pwm_frequency(config.pwm_frequency, duty_cycle)
                 .expect("Could not set fan speed");
+            println!("CPU temp : {cpu_temp}°C, fan speed : {duty_cycle}");
             thread::sleep(Duration::from_secs(config.sleep));
         },
     }
