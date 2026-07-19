@@ -71,6 +71,7 @@ fn main() {
 fn get_cpu_temp() -> f64 {
     fs::read_to_string("/sys/class/thermal/thermal_zone0/temp")
         .expect("Could not read cpu temperature from sysfs")
+        .trim()
         .parse::<u64>()
         .expect("Could not parse CPU temp from sysfs") as f64
         / 1000.
