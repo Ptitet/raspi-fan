@@ -1,71 +1,77 @@
-use rppal::pwm::{Channel, Polarity, Pwm};
-use serde::{Deserialize, Serialize};
-use std::{fs, thread, time::Duration};
+use clap::Parser;
+use rppal::gpio::Gpio;
+use serde::Deserialize;
+use std::{fs, path::PathBuf, thread, time::Duration};
 
-const CONFIG_PATH: &str = "/etc/raspifan/config.toml";
+const DEFAULT_CONFIG_PATH: &str = "/etc/raspi-fan/config.toml";
 
-#[derive(Serialize, Deserialize)]
-enum FanMode {
-    Auto,
-    Manual(usize),
+#[derive(Deserialize)]
+struct Config {
+    mode: Mode,
+    speed: f64,
+    bcm_pin: u8,
+    pwm_frequency: f64,
+    sleep: u64,
+    min_temp: f64,
+    max_temp: f64,
 }
 
-#[derive(Serialize, Deserialize)]
-struct Config {
-    mode: FanMode,
-    bcm_pin: u8,
-    frequency: f64,
-    sleep: u64,
-    min_speed: f64,
-    max_speed: f64,
-    max_temp: f64,
-    min_temp: f64,
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Mode {
+    Auto,
+    Manual,
+}
+
+impl Config {
+    pub fn parse_from_file(path: &PathBuf) -> Self {
+        let raw_config = fs::read_to_string(path).expect("Could not open config file");
+        toml::from_str(&raw_config).expect("Could not parse config")
+    }
+
+    pub fn compute_speed_from_temp(&self, temp: f64) -> f64 {
+        (temp - self.min_temp) / (self.max_temp - self.min_temp).clamp(0., 1.)
+    }
+}
+
+#[derive(Parser)]
+#[command(
+    name = "raspi-fan",
+    version = "0.1.0",
+    about = "Manage the Raspberry fan"
+)]
+struct Daemon {
+    #[arg(short, long, value_name = "CONFIG", default_value = DEFAULT_CONFIG_PATH)]
+    config: PathBuf,
+}
+
+fn main() {
+    let args = Daemon::parse();
+    let config = Config::parse_from_file(&args.config);
+
+    let gpio = Gpio::new().expect("Could not create GPIO instance");
+    let mut pin = gpio
+        .get(config.bcm_pin)
+        .expect("Could not retrieve pin")
+        .into_output();
+    match config.mode {
+        Mode::Manual => pin
+            .set_pwm_frequency(config.pwm_frequency, config.speed)
+            .expect("Could not set fan speed"),
+        Mode::Auto => loop {
+            let cpu_temp = get_cpu_temp();
+            let duty_cycle = config.compute_speed_from_temp(cpu_temp);
+            pin.set_pwm_frequency(config.pwm_frequency, duty_cycle)
+                .expect("Could not set fan speed");
+            thread::sleep(Duration::from_secs(config.sleep));
+        },
+    }
 }
 
 fn get_cpu_temp() -> f64 {
     fs::read_to_string("/sys/class/thermal/thermal_zone0/temp")
-        .expect("Could not read CPU temperature")
+        .expect("Could not read cpu temperature from sysfs")
         .parse::<f64>()
-        .expect("Could not parse CPU temperature")
+        .expect("Could not parse CPU temp from sysfs")
         / 1000.
-}
-
-impl Config {
-    pub fn compute_fan_duty_cycle(&self, cpu_temp: f64) -> f64 {
-        let raw_duty_cycle = (cpu_temp - self.min_temp) / (self.max_temp - self.min_temp);
-        raw_duty_cycle.clamp(self.min_speed, self.max_speed)
-    }
-}
-
-fn main() {
-    let raw_config = fs::read_to_string(CONFIG_PATH).expect("Could not read config file");
-    let config = toml::from_str::<Config>(&raw_config).expect("Failed to parse config");
-
-    let pwm_channel = match config.bcm_pin {
-        12 | 18 => Channel::Pwm0,
-        13 | 19 => Channel::Pwm1,
-        _ => panic!("BCM pin {} is not valid for hardware PWM", config.bcm_pin),
-    };
-
-    // let gpio = Gpio::new().expect("Could not create a GPIO instance");
-    // let mut pin = gpio
-    //     .get(config.bcm_pin)
-    //     .unwrap_or_else(|_| panic!("Should be able to open BCM pin {}", config.bcm_pin));
-
-    let pwm = Pwm::with_frequency(
-        pwm_channel,
-        config.frequency,
-        config.min_speed,
-        Polarity::Normal,
-        true,
-    )
-    .expect("Could not create PWM instance");
-
-    loop {
-        let cpu_temp = get_cpu_temp();
-        let duty_cycle = config.compute_fan_duty_cycle(cpu_temp);
-        pwm.set_duty_cycle(duty_cycle)
-            .expect("Failed to set duty cycle");
-        thread::sleep(Duration::from_secs(config.sleep));
-    }
 }

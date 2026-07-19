@@ -1,0 +1,9 @@
+mode = "auto"
+speed = 0.5
+bcm_pin = 18
+pwm_frequency = 25000
+sleep = 5
+min_speed = 0.2
+max_speed = 0.9
+min_temp = 40
+max_temp = 60
